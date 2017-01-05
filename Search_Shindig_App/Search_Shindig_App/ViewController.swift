@@ -14,7 +14,10 @@ class ViewController: UIViewController, UISearchBarDelegate, UITableViewDelegate
     
     var selectedThumbnailTitle = ""
     var selectedThumbnailImage = UIImageView()
+    var activityIndicator = UIActivityIndicatorView()
 
+    @IBOutlet weak var table: UITableView!
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         // Do any additional setup after loading the view, typically from a nib.
@@ -27,15 +30,63 @@ class ViewController: UIViewController, UISearchBarDelegate, UITableViewDelegate
     
     func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
         
-        search(searchText: searchBar.text!)
+        tableData.removeAll()
+        pauseApp()
+        view.endEditing(true)
+        
+        search(searchText: searchBar.text!) { (success) in
+            if success {
+                
+                self.table.reloadData()
+                self.restoreApp()
+                
+            } else {
+                
+                self.restoreApp()
+                
+                let alertController = UIAlertController(title: "Oops...", message: "Error has occurred", preferredStyle: UIAlertControllerStyle.alert)
+                
+                alertController.addAction(UIAlertAction(title: "Ok", style: .default, handler: { (action) in
+                    
+                }))
+                
+                self.present(alertController, animated: true, completion: nil)
+            }
+        }
         
     }
-
+    
+    func pauseApp() {
+    
+        activityIndicator = UIActivityIndicatorView(frame: CGRect(x: 0, y: 0, width: 50, height: 50))
+        
+        activityIndicator.center = self.view.center
+        
+        activityIndicator.hidesWhenStopped = true
+        
+        activityIndicator.activityIndicatorViewStyle = UIActivityIndicatorViewStyle.gray
+        
+        view.addSubview(activityIndicator)
+        
+        activityIndicator.startAnimating()
+        
+        UIApplication.shared.beginIgnoringInteractionEvents() // Changed UIApplication.shared() to UIApplication.shared
+    
+    }
+    
+    func restoreApp() {
+        
+        activityIndicator.stopAnimating()
+        
+        UIApplication.shared.endIgnoringInteractionEvents() // Changed UIApplication.shared() to UIApplication.shared
+        
+        
+    }
     
     public func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int
     {
         
-        return 25
+        return Array(tableData.keys).count
         
     }
     
@@ -44,8 +95,12 @@ class ViewController: UIViewController, UISearchBarDelegate, UITableViewDelegate
         
         let cell = tableView.dequeueReusableCell(withIdentifier: "cell", for: indexPath) as! QueryResultTableViewCell
         
-        cell.thumbnailTitle.text = "TEST \(indexPath.row)"
-        cell.thumbnail.image = #imageLiteral(resourceName: "Check Mark.png")
+        if Array(tableData.keys).count > 0 {
+        
+            cell.thumbnailTitle.text = Array(tableData.keys)[indexPath.row]
+            cell.thumbnail.image = tableData[Array(tableData.keys)[indexPath.row]]?.image
+
+        }
         
         return cell
         
@@ -56,7 +111,6 @@ class ViewController: UIViewController, UISearchBarDelegate, UITableViewDelegate
         
         let currentCell = tableView.cellForRow(at: indexPath) as! QueryResultTableViewCell
         
-        print(currentCell.thumbnailTitle!.text!)
         selectedThumbnailImage = currentCell.thumbnail
         selectedThumbnailTitle = currentCell.thumbnailTitle.text!
    
@@ -79,11 +133,13 @@ class ViewController: UIViewController, UISearchBarDelegate, UITableViewDelegate
         
     }
     
-    func search(searchText: String)
+    func search(searchText: String, completionHandler: @escaping (_ success: Bool) -> Void)
     {
+        
+        var success = false
     
         let url = URL(string: "https://api.flickr.com/services/rest/?method=flickr.photos.search&api_key=29fd4744809cf869f303930c8825538c&format=json&nojsoncallback=1&text=" + searchText)
-        
+
         let task = URLSession.shared.dataTask(with: url!) { (data, response, error) in
             
             if error != nil {
@@ -100,26 +156,37 @@ class ViewController: UIViewController, UISearchBarDelegate, UITableViewDelegate
                         
                         if let photosArray = jsonResult["photos"]?["photo"] as? [[String: AnyObject]] {
                             
-                             for photos in photosArray {
+                            if photosArray.count > 0 {
                                 
-                             let farm = photos["farm"] as? Int
-                             let id = photos["id"] as?  String
-                             let secret = photos["secret"] as? String
-                             let server = photos["server"] as? String
-                             let title = photos["title"] as? String
-                             
+                                var i = 0
                                 
-                                getThumbnailImage(farm: farm!, server: server!, id: id!, secret: secret)
+                                for photos in photosArray {
+                                    
+                                    if i < 25 {   // Only pull 25
+                                        
+                                        let farm = photos["farm"] as? Int
+                                        let id = photos["id"] as?  String
+                                        let secret = photos["secret"] as? String
+                                        let server = photos["server"] as? String
+                                        let title = photos["title"] as? String
+                                        
+                                        //self.tableData[title!] = UIImageView(image: #imageLiteral(resourceName: "Check Mark.png"))
+                                        
+                                        self.getThumbnailImage(title: title!, farm: farm!, server: server!, id: id!, secret: secret!, completionHandler: { (sucess) in
+                                         
+                                         completionHandler(success)
+                                         
+                                         })
+                                        
+                                        i += 1   // add 1 to number of pics
+                                        
+                                    }
+                                    
+                                }
+
+                                success = true
                                 
-                                self.tableData[title!] = nil
-                                
-                             print("Farm = \(farm!)")
-                             print("ID = " + id!)
-                             print("Secret = " + secret!)
-                             print("Server = " + server!)
-                             print("Title = " + title!)
-                             
-                             }
+                            }
                             
                         } else {
                             
@@ -135,20 +202,108 @@ class ViewController: UIViewController, UISearchBarDelegate, UITableViewDelegate
                     
                 }
                 
-            
             }
+            
+            DispatchQueue.main.sync(execute: {
+                
+                completionHandler(success)
+                
+            })
     
         }
         task.resume()
+        
     }
     
-    func getThumbnailImage(farm: Int, server: String, id: String, secret: Int) {
+    func getThumbnailImage(title: String, farm: Int, server: String, id: String, secret: String, completionHandler: @escaping (_ success: Bool) -> Void) {
     
+        print("Getting thumbnail")
+    
+        var success = false
         
+        let url = URL(string: "https://c5.staticflickr.com/\(farm)/" + server + "/" + id + "_" + secret + ".jpg")
+        
+        print(url!)
+        
+        let request = NSMutableURLRequest(url: url!)
+        
+        let task = URLSession.shared.dataTask(with: request as URLRequest) {
+            data, response, error in
+            
+            if error != nil {
+                
+                print(error!)
+                
+            } else {
+                
+                if let data = data {
+                    
+                    if let iconImage = UIImage(data: data) {
+                        
+                        self.tableData[title] = UIImageView(image: iconImage)
+                        success = true
+                        
+                    }
+                    
+                }
+                
+            }
+            
+            DispatchQueue.main.sync(execute: {
+                
+                completionHandler(success)
+                
+            })
+        
+        }
+        task.resume()
     
     }
-        
     
-
+    func getFullImage(title: String, farm: Int, server: String, id: String, secret: String, completionHandler: @escaping (_ success: Bool) -> Void) {
+        
+        print("Getting thumbnail")
+        
+        var success = false
+        
+        let url = URL(string: "https://c5.staticflickr.com/\(farm)/" + server + "/" + id + "_" + secret + ".jpg")
+        
+        print(url!)
+        
+        let request = NSMutableURLRequest(url: url!)
+        
+        let task = URLSession.shared.dataTask(with: request as URLRequest) {
+            data, response, error in
+            
+            if error != nil {
+                
+                print(error!)
+                
+            } else {
+                
+                if let data = data {
+                    
+                    if let iconImage = UIImage(data: data) {
+                        
+                        self.tableData[title] = UIImageView(image: iconImage)
+                        success = true
+                        
+                    }
+                    
+                }
+                
+            }
+            
+            DispatchQueue.main.sync(execute: {
+                
+                completionHandler(success)
+                
+            })
+            
+        }
+        task.resume()
+        
+    }
+    
 }
 
